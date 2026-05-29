@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sleep Study Recording Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        .sidebar {
+            width: 300px;
+            max-width: 300px;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #e5e7eb;
+            background-color: #f9fafb;
+        }
+
+        .filter-box {
+            padding: 16px;
+            background-color: white;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .filter-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .filter-input {
+            flex: 1;
+            min-width: 0;
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .filter-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .ahi-filter {
+            flex-shrink: 0;
+            padding: 8px 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 13px;
+            background: white;
+            color: #374151;
+            cursor: pointer;
+            max-width: 130px;
+        }
+
+        .ahi-filter:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .tiles-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+        }
+
+        .tile {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .tile:hover {
+            border-color: #3b82f6;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .tile.active {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
+        }
+
+        .tile-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .recording-id {
+            font-weight: 600;
+            color: #1f2937;
+            font-size: 16px;
+        }
+
+        .patient-id {
+            color: #6b7280;
+            font-size: 14px;
+        }
+
+        .tile-info {
+            font-size: 13px;
+            color: #6b7280;
+            margin-top: 4px;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: white;
+        }
+
+        .iframe-container {
+            flex: 1;
+            position: relative;
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        .placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #9ca3af;
+            font-size: 18px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .no-results {
+            text-align: center;
+            padding: 32px;
+            color: #9ca3af;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <div class="filter-box">
+                <div class="filter-row">
+                    <input 
+                        type="text" 
+                        id="filterInput" 
+                        class="filter-input" 
+                        placeholder="Search..."
+                    >
+                    <select id="ahiFilter" class="ahi-filter" title="Filter by AHI severity" aria-label="AHI severity filter">
+                        <option value="">All AHI</option>
+                        <option value="normal">Normal (&lt;5)</option>
+                        <option value="mild">Mild (5 to 15)</option>
+                        <option value="moderate">Moderate (15 to 30)</option>
+                        <option value="severe">Severe (30+)</option>
+                        <option value="unknown">Unknown</option>
+                    </select>
+                </div>
+            </div>
+            <div class="tiles-container" id="tilesContainer">
+            </div>
+        </div>
+        <div class="main-content">
+            <div class="iframe-container">
+                <div id="placeholder" class="placeholder">
+                    Please select a recording to view
+                </div>
+                <iframe id="plotFrame" class="hidden"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allRecordings = [];
+        let selectedRecordingId = null;
+
+        function ahiSeverity(ahi) {
+            if (ahi === null || ahi === undefined || Number.isNaN(Number(ahi))) {
+                return 'unknown';
+            }
+            const n = Number(ahi);
+            if (n < 5) return 'normal';
+            if (n < 15) return 'mild';
+            if (n < 30) return 'moderate';
+            return 'severe';
+        }
+
+        function ahiSeverityLabel(sev) {
+            const labels = {
+                normal: 'normal',
+                mild: 'mild',
+                moderate: 'moderate',
+                severe: 'severe',
+                unknown: 'unknown'
+            };
+            return labels[sev] || 'unknown';
+        }
+
+        function formatAhiLine(rec) {
+            if (rec.ahi === null || rec.ahi === undefined) {
+                return '<div class="tile-info">AHI: n/a</div>';
+            }
+            const sev = ahiSeverity(rec.ahi);
+            const num = typeof rec.ahi === 'number' ? rec.ahi.toFixed(1) : String(rec.ahi);
+            return `<div class="tile-info">AHI: ${num} (${ahiSeverityLabel(sev)})</div>`;
+        }
+
+        async function fetchRecordings() {
+            try {
+                const response = await fetch('/api/recordings');
+                allRecordings = await response.json();
+                applyFilters();
+            } catch (error) {
+                console.error('Error fetching recordings:', error);
+            }
+        }
+
+        function renderTiles(recordings) {
+            const container = document.getElementById('tilesContainer');
+            
+            if (recordings.length === 0) {
+                container.innerHTML = '<div class="no-results">No recordings found</div>';
+                return;
+            }
+
+            container.innerHTML = recordings.map(rec => `
+                <div class="tile ${rec.recording_id === selectedRecordingId ? 'active' : ''}" 
+                     data-id="${rec.recording_id}">
+                    <div class="tile-header">
+                        <div class="recording-id">Recording ${rec.recording_id}</div>
+                    </div>
+                    <div class="patient-id">${rec.patient_id}</div>
+                    ${formatAhiLine(rec)}
+                    <div class="tile-info">Date: ${rec.date}</div>
+                    <div class="tile-info">Duration: ${rec.timespan}</div>
+                </div>
+            `).join('');
+
+            document.querySelectorAll('.tile').forEach(tile => {
+                tile.addEventListener('click', () => {
+                    const recordingId = tile.getAttribute('data-id');
+                    loadRecording(recordingId);
+                });
+            });
+        }
+
+        function loadRecording(recordingId) {
+            selectedRecordingId = recordingId;
+            
+            const placeholder = document.getElementById('placeholder');
+            const iframe = document.getElementById('plotFrame');
+            
+            placeholder.classList.add('hidden');
+            iframe.classList.remove('hidden');
+            iframe.src = `/plot/${recordingId}`;
+            
+            document.querySelectorAll('.tile').forEach(tile => {
+                if (tile.getAttribute('data-id') === recordingId) {
+                    tile.classList.add('active');
+                } else {
+                    tile.classList.remove('active');
+                }
+            });
+        }
+
+        function applyFilters() {
+            const searchTerm = document.getElementById('filterInput').value.toLowerCase();
+            const ahiChoice = document.getElementById('ahiFilter').value;
+
+            const filtered = allRecordings.filter(rec => {
+                if (ahiChoice) {
+                    const sev = ahiSeverity(rec.ahi);
+                    if (sev !== ahiChoice) {
+                        return false;
+                    }
+                }
+                if (!searchTerm) {
+                    return true;
+                }
+                const searchableText = JSON.stringify(rec).toLowerCase();
+                return searchableText.includes(searchTerm);
+            });
+
+            renderTiles(filtered);
+        }
+
+        document.getElementById('filterInput').addEventListener('input', () => {
+            applyFilters();
+        });
+
+        document.getElementById('ahiFilter').addEventListener('change', () => {
+            applyFilters();
+        });
+
+        fetchRecordings();
+    </script>
+</body>
+</html>

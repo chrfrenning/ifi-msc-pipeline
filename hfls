@@ -1,0 +1,111 @@
+#!.venv/bin/python
+
+#
+# Small utility to list the contents of HDF5 files
+#
+# Supports ls -l style output and a --tree view similar to the
+# linux tree utility.
+#
+# Run without command line arguments to get help.
+#
+# Copyright 2026 Christopher Frenning
+# chrifren@ifi.uio.no, christopher@frenning.com
+#
+# Licensed under the MIT License - see LICENSE.md for details
+#
+
+import sys
+import argparse
+import h5py
+
+
+def format_size(nbytes):
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if nbytes < 1024:
+            return f"{nbytes:.0f}{unit}" if unit == 'B' else f"{nbytes:.1f}{unit}"
+        nbytes /= 1024
+    return f"{nbytes:.1f}TB"
+
+
+def ls_long(filename, path='/'):
+    with h5py.File(filename, 'r') as f:
+        node = f[path]
+        if not isinstance(node, h5py.Group):
+            ds = node
+            shape = 'x'.join(str(s) for s in ds.shape)
+            size = format_size(ds.id.get_storage_size())
+            print(f"  dataset  {size:>8}  {shape:>16}  {ds.dtype}  {ds.name}")
+            return
+
+        children = sorted(node.keys())
+        if not children:
+            print(f"(empty group: {path})")
+            return
+
+        for name in children:
+            child = node[name]
+            if isinstance(child, h5py.Group):
+                n_items = len(child)
+                print(f"  group   {n_items:>8} items{' ':>16}  {child.name}")
+            else:
+                shape = 'x'.join(str(s) for s in child.shape)
+                size = format_size(child.id.get_storage_size())
+                print(f"  dataset  {size:>8}  {shape:>16}  {child.dtype}  {child.name}")
+
+
+def print_tree(group, prefix='', max_depth=None, depth=0):
+    children = sorted(group.keys())
+    for i, name in enumerate(children):
+        is_last = (i == len(children) - 1)
+        connector = '└── ' if is_last else '├── '
+        child = group[name]
+
+        if isinstance(child, h5py.Group):
+            n_items = len(child)
+            print(f"{prefix}{connector}{name}/  ({n_items} items)")
+            if max_depth is None or depth + 1 < max_depth:
+                extension = '    ' if is_last else '│   '
+                print_tree(child, prefix + extension, max_depth, depth + 1)
+        else:
+            shape = 'x'.join(str(s) for s in child.shape)
+            size = format_size(child.id.get_storage_size())
+            print(f"{prefix}{connector}{name}  [{shape}, {child.dtype}, {size}]")
+
+
+def tree(filename, path='/', max_depth=None):
+    with h5py.File(filename, 'r') as f:
+        node = f[path]
+        if not isinstance(node, h5py.Group):
+            shape = 'x'.join(str(s) for s in node.shape)
+            size = format_size(node.id.get_storage_size())
+            print(f"{node.name}  [{shape}, {node.dtype}, {size}]")
+            return
+
+        print(f"{node.name}")
+        print_tree(node, max_depth=max_depth)
+
+
+def main():
+    argparser = argparse.ArgumentParser(description='List contents of HDF5 files', epilog='(C) 2026 Christopher Frenning (chrifren@ifi.uio.no)')
+    argparser.add_argument('filename', help="Filename or full path to the HDF5 file")
+    argparser.add_argument('path', nargs='?', default='/', help="Internal HDF5 path to list (default: /)")
+    argparser.add_argument('--tree', '-t', action='store_true', help="Print a tree structure")
+    argparser.add_argument('--depth', '-d', type=int, default=None, metavar='N', help="Maximum depth for --tree (default: unlimited)")
+
+    args = argparser.parse_args()
+
+    if not args.filename:
+        argparser.print_help()
+        sys.exit(1)
+
+    if args.tree:
+        tree(args.filename, args.path, max_depth=args.depth)
+    else:
+        ls_long(args.filename, args.path)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(130)

@@ -1,0 +1,96 @@
+#!.venv/bin/python
+
+#
+# Small utility to view HDF5 files as CSV or table
+#
+# Run without command line arguments to get help.
+#
+# Copyright 2026 Christopher Frenning
+# chrifren@ifi.uio.no, christopher@frenning.com
+#
+# Licensed under the MIT License - see LICENSE.md for details
+#
+
+import os
+import re
+import sys
+import argparse
+import h5py
+import pandas as pd
+
+def load_h5(filename, key=None, offset=None, limit=None):
+    df = pd.read_hdf(filename, key=key)
+    n = len(df)
+    start = 0 if offset is None else (offset if offset >= 0 else max(0, n + offset))
+    end = n if limit is None or limit <= 0 else start + limit
+    return df.iloc[start:end], n
+
+def print_h5_as_csv(df, selected_columns=None, table=False):
+    df.index.name = df.index.name or 'ix'
+
+    if selected_columns:
+        df = df[selected_columns]
+    
+    if table:
+        print(df.to_markdown())
+    else:
+        print(df.to_csv())
+
+def print_attrs(filename, key='/'):
+    with h5py.File(filename, 'r') as f:
+        node = f[key]
+        if not node.attrs:
+            print(f"No attributes on '{key}'")
+            return
+        max_name = max(len(k) for k in node.attrs)
+        for k, v in sorted(node.attrs.items()):
+            print(f"  {k:<{max_name}}  {v}")
+
+def main():
+    argparser = argparse.ArgumentParser(description='Display HDF5 and convert to CSV', epilog='(C) 2026 Christopher Frenning (chrifren@ifi.uio.no)')
+    argparser.add_argument('filename', help="Filename or full path to the source HDF5 file")
+    argparser.add_argument('key', nargs='?', type=str, default='/', help="HDF5 key (internal path) to read (default: data)")
+    argparser.add_argument('--offset', '-o', dest='offset', type=int, default=0, metavar='N', help="Row offset to start from (negative counts from end)")
+    argparser.add_argument('--limit', '-l', dest='limit', type=int, default=0, metavar='N', help="Maximum number of rows to print")
+    argparser.add_argument('--info', action='store_true', help="Get information about the dataset")
+    argparser.add_argument('--attrs', '-a', action='store_true', help="Show attributes")
+    argparser.add_argument('--column-filter', '-c', help="Print only the specified columns (list of column names)")
+    argparser.add_argument('--table', action='store_true', help="Print the dataset as a table (default)")
+    argparser.add_argument('--csv', action='store_true', help="Print the dataset as CSV format")
+
+    args = argparser.parse_args()
+
+    if not args.filename:
+        argparser.print_help()
+        sys.exit(1)
+
+    if args.attrs:
+        print_attrs(args.filename, args.key)
+        return
+
+    if not args.csv and not args.table:
+        args.table = True
+
+    if args.column_filter:
+        args.column_filter = [c.strip() for c in re.split(r'[],;:|\t ]', args.column_filter)]
+        args.column_filter = [c for c in args.column_filter if c]
+        if not args.column_filter:
+            argparser.error("No columns specified")
+
+    args.key = args.key if args.key != '/' else None
+    df, total_rows = load_h5(args.filename, key=args.key, offset=args.offset, limit=args.limit)
+    if args.info:
+        print(f"Filename:\t{args.filename}")
+        print(f"File size:\t{os.path.getsize(args.filename)} bytes")
+        print(f"Key:\t\t{args.key}")
+        print(f"Total records:\t{total_rows}")
+        col_list = "\n\t\t".join([m for m in sorted(df.columns)])
+        print(f"Columns:\t{col_list}")
+    else:
+        print_h5_as_csv(df, args.column_filter, args.table)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(130)

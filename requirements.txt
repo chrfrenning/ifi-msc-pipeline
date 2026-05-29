@@ -1,0 +1,12 @@
+pyedflib
+matplotlib 
+numpy
+pandas
+dotenv
+tables
+scipy
+plotly
+fastparquet
+tabulate
+tqdm
+h5py
